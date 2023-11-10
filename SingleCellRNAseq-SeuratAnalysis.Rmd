@@ -1,0 +1,579 @@
+
+# Introduction to Seurat and Single Cell Genomics Analysis
+
+This document presents an analysis workflow using the Seurat package in R. Seurat is a widely used toolkit for single-cell RNA sequencing data analysis, offering a comprehensive suite of tools for quality control, analysis, and exploration of single-cell RNA-seq data.
+
+Our analysis will include:
+
+1. Data loading and pre-processing.
+2. Identification of highly variable features (genes).
+3. Scaling and normalization of data.
+4. Linear dimensional reduction and clustering analysis.
+5. Data visualization through various plots.
+
+The primary goal is to understand the cellular heterogeneity and discover molecular markers for each cell type, facilitating deeper insights into biological processes at a single-cell resolution.
+
+
+################################################################################
+
+# Seurat - Guided Clustering
+# Seurat is an R toolkit for single cell genomics, developed and maintained by the Satija Lab at NYGC.
+
+# reference > https://satijalab.org/seurat/articles/pbmc3k_tutorial.html 
+# reference > https://github.com/satijalab/seurat
+# reference > https://github.com/brandonyph/Introduction-to-Seurat-Package
+
+################################################################################
+
+# Workflow for Seurat - Guided Clustering
+1. Package Import 
+2. Data Import  
+3. Data QC and Inspection  
+5. Data Normalization  
+6. Data Clustering (PCA/UMAP)  
+7. Markers Identification  
+8. Putting all together  
+
+################################################################################
+# Install necessary packages
+# install.packages('Seurat')
+# install.packages("Matrix")
+# devtools::install_version("Matrix",version = "1.6.1.1")
+
+################################################################################
+---
+# Setup the Seurat Object
+# Loading the rawdata > dataset of Peripheral Blood Mononuclear Cells (PBMC) freely available from 10X Genomics. There are 2,700 single cells that were sequenced on the Illumina NextSeq 500. 
+
+https://s3-us-west-2.amazonaws.com/10x.files/samples/cell/pbmc3k/pbmc3k_filtered_gene_bc_matrices
+---
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(Matrix)
+```
+# Loading the rawdata
+
+```{r}
+# Load the PBMC dataset
+pbmc.data <- Read10X(data.dir = "./pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+```
+# QC and selecting cells for further analysis
+
+```{r}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+# In the example, we visualize QC metrics, and use these to filter cells.
+# We filter cells that have unique feature counts over 2,500 or less than 200
+# We filter cells that have >5% mitochondrial counts
+
+# Visualize QC metrics as a violin plot
+vlnplot_qc <- vlnplot_qc <- VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+
+# Saving the plot as PDF and PNG
+pdf("figures/plot_1.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_1.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+
+```
+
+
+```{r}
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- feature_scatter1 <- feature_scatter1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- feature_scatter2 <- feature_scatter2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+
+# Saving the plot as PDF and PNG
+pdf("figures/plot_2.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_2.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+VST function calculates a variance stabilizing transformation (VST) from the fitted dispersion-mean relation(s) and then transforms the count data (normalized by division by the size factors or normalization factors), yielding a matrix of values which are now approximately homoskedastic (having constant variance along the range of mean values). The transformation also normalizes with respect to library size. The rlog is less sensitive to size factors, which can be an issue when size factors vary widely. These transformations are useful when checking for outliers or as input for machine learning techniques such as clustering or linear discriminant analysis.
+
+```{r}
+
+# Normalizing the data
+# After removing unwanted cells from the dataset, the next step is to normalize the data. By default, we employ a global-scaling normalization method “LogNormalize” that normalizes the feature expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000 by default), and log-transforms the result. In Seurat v5, Normalized values are stored in pbmc[["RNA"]]$data.
+
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize")
+
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+#https://rdrr.io/bioc/DESeq2/man/varianceStabilizingTransformation.html
+```
+
+
+```{r}
+# Identify the 10 most highly variable genes
+# We next calculate a subset of features that exhibit high cell-to-cell variation in the dataset (i.e, they are highly expressed in some cells, and lowly expressed in others).
+
+top10 <- head(VariableFeatures(pbmc), 10)
+top10
+```
+
+```{r}
+# plot variable features with and without labels
+plot3 <- variable_feature_plot <- VariableFeaturePlot(pbmc)
+
+plot3    
+
+# Saving the plot as PDF and PNG
+pdf("figures/plot_3.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_3.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+
+```
+
+
+
+```{r}
+# plot variable features with and without labels
+
+plot4 <- LabelPoints(plot = plot3, points = top10, repel = TRUE)
+            
+plot4
+
+# Saving the plot as PDF and PNG
+pdf("figures/plot_4.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_4.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+
+```{r}
+# Scaling the data
+# Next, we apply a linear transformation (‘scaling’) that is a standard pre-processing step prior to dimensional reduction techniques like PCA. 
+
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+```
+
+```{r}
+# Perform linear dimensional reduction
+# Next we perform PCA on the scaled data. 
+
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+
+# Examine and visualize PCA results a few different ways
+print(pbmc[["pca"]], dims = 1:2, nfeatures = 5)
+```
+
+```{r}
+pca_loadings_plot <- VizDimLoadings(pbmc, dims = 1:2, nfeatures = 15, reduction = "pca")
+pca_loadings_plot
+# Saving the plot as PDF and PNG
+pdf("figures/plot_5.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_5.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+```{r}
+pca_dim_plot <- DimPlot(pbmc, reduction = "pca")
+
+pca_dim_plot
+
+# Saving the plot as PDF and PNG
+pdf("figures/plot_6.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_6.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+
+
+```{r}
+
+# Instead of using recordPlot(), save the plot directly using pdf() and png()
+pdf("figures/plot_7.pdf")
+DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE)
+dev.off()
+
+png("figures/plot_7.png", width = 10, height = 8, units = "in", res = 300)
+DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE)
+dev.off()
+
+heatmap1_plot <- DimHeatmap(pbmc, dims = 1, cells = 500, balanced = TRUE)
+heatmap1_plot
+
+```
+
+
+```{r}
+
+# Generate and display the heatmap
+# Instead of using recordPlot(), save the plot directly using pdf() and png()
+pdf("figures/plot_8.pdf")
+DimHeatmap(pbmc, dims = 1:15, cells = 500, balanced = TRUE)
+dev.off()
+
+png("figures/plot_8.png", width = 10, height = 8, units = "in", res = 300)
+DimHeatmap(pbmc, dims = 1:15, cells = 500, balanced = TRUE)
+dev.off()
+
+heatmap2_plot <- DimHeatmap(pbmc, dims = 1:15, cells = 500, balanced = TRUE)
+heatmap2_plot
+
+
+
+```
+https://www.rdocumentation.org/packages/jackstraw/versions/1.3/topics/jackstraw
+
+Test for association between the observed data and their systematic patterns of variations. Systematic patterns may be captured by latent variables using principal component analysis (PCA), factor analysis (FA), and related methods. The jackstraw enables statistical testing for association between observed variables and latent variables, as captured by PCs or other estimates. 
+
+```{r}
+
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More
+# approximate techniques such as those implemented in ElbowPlot() can be used to reduce
+# computation time
+pbmc <- JackStraw(pbmc, num.replicate = 100)
+pbmc <- ScoreJackStraw(pbmc, dims = 1:20)
+
+jackstraw_plot <- JackStrawPlot(pbmc, dims = 1:15)
+jackstraw_plot
+# Saving the plot as PDF and PNG
+pdf("figures/plot_9.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_9.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+
+```{r}
+# Determine the ‘dimensionality’ of the dataset
+elbow_plot <- ElbowPlot(pbmc)
+elbow_plot
+# Saving the plot as PDF and PNG
+pdf("figures/plot_10.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_10.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+
+
+```
+We chose 10 here, but encourage users to consider the following:
+
+Dendritic cell and NK aficionados may recognize that genes strongly associated with PCs 12 and 13 define rare immune subsets (i.e. MZB1 is a marker for plasmacytoid DCs). However, these groups are so rare, they are difficult to distinguish from background noise for a dataset of this size without prior knowledge
+.
+We encourage users to repeat downstream analyses with a different number of PCs (10, 15, or even 50!). As you will observe, the results often do not differ dramatically.
+
+We advise users to err on the higher side when choosing this parameter. For example, performing downstream analyses with only 5 PCs does significantly and adversely affect results.
+
+```{r}
+# Cluster the cells
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+```
+
+```{r}
+# Look at cluster IDs of the first 5 cells
+head(Idents(pbmc), 5)
+```
+
+```{r}
+# Run non-linear dimensional reduction (UMAP/tSNE)
+# Seurat offers several non-linear dimensional reduction techniques, such as tSNE and UMAP, to visualize and explore these datasets. The goal of these algorithms is to learn underlying structure in the dataset, in order to place similar cells together in low-dimensional space. 
+
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+
+umap_plot <- DimPlot(pbmc, reduction = "umap")
+umap_plot
+# Saving the plot as PDF and PNG
+pdf("figures/plot_11.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_11.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+
+```
+# Finding differentially expressed features (cluster biomarkers)
+
+```{r}
+# find all markers of cluster 0
+cluster0.markers <- FindMarkers(pbmc, ident.1 = 0, logfc.threshold = 0.25, test.use = "roc", only.pos = TRUE)
+head(cluster0.markers, n = 5)
+
+VlnPlot_MS4A1_CD79A <- VlnPlot(pbmc, features = c("MS4A1", "CD79A"))
+VlnPlot_MS4A1_CD79A
+# Saving the plot as PDF and PNG
+pdf("figures/plot_12.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_12.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+
+```{r}
+
+# you can plot raw counts as well
+VlnPlot_NKG7_PF4 <- VlnPlot(pbmc, features = c("NKG7", "PF4"), slot = "counts", log = TRUE)
+VlnPlot_NKG7_PF4
+# Saving the plot as PDF and PNG
+pdf("figures/plot_13.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_13.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+
+```{r}
+
+# or
+FeaturePlot_Markers <- FeaturePlot(pbmc, features = c("MS4A1", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP", "CD8A"))
+
+# Saving the plot as PDF and PNG
+pdf("figures/plot_14.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_14.png", plot = last_plot(), width = 20, height = 17, dpi = 300)
+
+```
+
+```{r}
+# find all markers of cluster 1
+cluster1.markers <- FindMarkers(pbmc, ident.1 = 1, min.pct = 0.25)
+head(cluster1.markers, n = 5)
+
+VlnPlot_Cluster1_Markers <- VlnPlot(pbmc, features = c(row.names(cluster1.markers)[1], row.names(cluster1.markers)[2]))
+VlnPlot_Cluster1_Markers
+# Saving the plot as PDF and PNG
+pdf("figures/plot_15.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_15.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+
+```
+
+```{r}
+# find all markers of cluster 2
+cluster2.markers <- FindMarkers(pbmc, ident.1 = 2, min.pct = 0.25)
+head(cluster2.markers, n = 5)
+
+VlnPlot_Cluster2_Markers <- VlnPlot(pbmc, features = c(row.names(cluster2.markers)[1], row.names(cluster2.markers)[2]))
+VlnPlot_Cluster2_Markers
+# Saving the plot as PDF and PNG
+pdf("figures/plot_16.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_16.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+
+```{r}
+# find all markers distinguishing cluster 5 from clusters 0 and 3
+cluster5.markers <- FindMarkers(pbmc, ident.1 = 5, ident.2 = c(0, 3), min.pct = 0.25)
+head(cluster5.markers, n = 5)
+
+VlnPlot_Cluster5_Markers <- VlnPlot(pbmc, features = c(row.names(cluster5.markers)[1], row.names(cluster5.markers)[2]))
+VlnPlot_Cluster2_Markers
+# Saving the plot as PDF and PNG
+pdf("figures/plot_17.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_17.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+
+```
+
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+```
+
+```{r}
+x <- pbmc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_log2FC)
+FeaturePlot_Markers_Part1 <- FeaturePlot(pbmc, features = x$gene[1:4])
+FeaturePlot_Markers_Part1
+# Saving the plot as PDF and PNG
+pdf("figures/plot_18.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_18.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+```
+
+
+```{r}
+x <- pbmc.markers %>% group_by(cluster) %>% top_n(n = 1, wt = avg_log2FC)
+
+FeaturePlot_Markers_Part2 <- FeaturePlot(pbmc, features = x$gene[5:8])
+FeaturePlot_Markers_Part2
+# Saving the plot as PDF and PNG
+pdf("figures/plot_19.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_19.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+```
+
+```{r}
+p <- FeaturePlot(pbmc, features = c("MS4A1", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP", "CD8A"), combine = FALSE)
+
+p <- lapply(X = p, FUN = function(x) x + 
+                                        theme(plot.title = element_text(size = 8)) +
+                                        theme(axis.title.y = element_text(size = 5)) +
+                                        theme(axis.title.x = element_text(size = 5)) +
+                                        theme(axis.text.y = element_text(size = 5)) +
+                                        theme(axis.text.x = element_text(size = 5)) +
+                                        theme(legend.position = "none")  )
+
+CombinedFeaturePlots_Part1 <- CombinePlots(plots = p)
+CombinedFeaturePlots_Part1
+# Saving the plot as PDF and PNG
+pdf("figures/plot_20.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_20.png", plot = last_plot(), width = 20, height = 15, dpi = 300)
+```
+
+```{r}
+top10 <- pbmc.markers %>% 
+            group_by(cluster) %>% 
+            top_n(n = 10, wt = avg_log2FC)
+top10
+```
+
+```{r}
+# DoHeatmap() generates an expression heatmap for given cells and features. In this case, we are plotting the top 20 markers (or all markers if less than 20) for each cluster.
+
+p2 <- DoHeatmap(pbmc, features = top10$gene, group.bar.height = 0.01,size=3,combine = FALSE) 
+
+p2 <- lapply(X = p2, FUN = function(x) x + 
+                                        theme(plot.title = element_text(size = 8)) +
+                                        theme(axis.title.y = element_text(size = 5)) +
+                                        theme(axis.title.x = element_text(size = 5)) +
+                                        theme(axis.text.y = element_text(size = 3)) +
+                                        theme(legend.position = "none")  )
+
+CombinedFeaturePlots_Part2 <- CombinePlots(plots = p2)
+CombinedFeaturePlots_Part2
+# Saving the plot as PDF and PNG
+pdf("figures/plot_21.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_21.png", plot = last_plot(), width = 15, height = 8, dpi = 300)
+
+
+```
+# Assigning cell type identity to clusters
+
+```{r}
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono",
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+UMAPPlot_NewClusterIDs <- DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+UMAPPlot_NewClusterIDs
+# Saving the plot as PDF and PNG
+pdf("figures/plot_22.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_22.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+
+```
+
+```{r}
+new.cluster.ids <- c("Naive CD4 T", "Memory CD4 T", "CD14+ Mono", "B", "CD8 T", "FCGR3A+ Mono", "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+PCADimPlot_NewClusterIDs <- DimPlot(pbmc, reduction = "pca", label = TRUE, pt.size = 0.5)
+PCADimPlot_NewClusterIDs
+# Saving the plot as PDF and PNG
+pdf("figures/plot_23.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_23.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+```
+
+```{r}
+pbmc
+UMAPPlot_Final <- DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.5)
+UMAPPlot_Final
+# Saving the plot as PDF and PNG
+pdf("figures/plot_24.pdf")
+print(last_plot())
+dev.off()
+ggsave("figures/plot_24.png", plot = last_plot(), width = 10, height = 8, dpi = 300)
+```
+
+```{r}
+# Function to save all plots as PDF and PNG
+
+# Save plots function
+save_plots <- function(plot_list, folder_name = "plots") {
+  if (!dir.exists(folder_name)) {
+    dir.create(folder_name)
+  }
+  
+  for (i in seq_along(plot_list)) {
+    plot_name <- names(plot_list)[i]
+    pdf_path <- paste0(folder_name, "/", plot_name, ".pdf")
+    png_path <- paste0(folder_name, "/", plot_name, ".png")
+    
+    # Explicitly print the plot to ensure it's rendered
+    print(plot_list[[i]])
+    
+    # Save as PDF
+    ggsave(pdf_path, plot = plot_list[[i]], device = "pdf", width = 7, height = 5)
+    
+    # Save as PNG
+    ggsave(png_path, plot = plot_list[[i]], device = "png", width = 7, height = 5)
+  }
+}
+
+# Assign plots to variables
+# ... (previous plot assignments remain unchanged)
+
+# Create a list of plot objects with descriptive names
+plot_list <- list(
+  QC_ViolinPlot = vlnplot_qc,
+  FeatureScatterCombined = plot1 + plot2,
+  VariableFeaturesPlot = plot3,
+  LabeledVariableFeaturesPlot = plot4,
+  PCA_LoadingsPlot = pca_loadings_plot, # From VizDimLoadings
+  PCA_DimPlot = pca_dim_plot, # From DimPlot (PCA)
+  Heatmap1 = heatmap1_plot, # From first DimHeatmap
+  Heatmap2 = heatmap1_plot, # From second DimHeatmap
+  JackStrawPlot = jackstraw_plot, # From JackStrawPlot
+  ElbowPlot = elbow_plot, # From ElbowPlot
+  UMAPPlot = umap_plot, # From DimPlot (UMAP)
+  VlnPlot_MS4A1_CD79A = VlnPlot_MS4A1_CD79A, # From first VlnPlot (MS4A1, CD79A)
+  VlnPlot_NKG7_PF4 = VlnPlot_NKG7_PF4, # From second VlnPlot (NKG7, PF4)
+  FeaturePlot_Markers = FeaturePlot_Markers, # From FeaturePlot
+  VlnPlot_Cluster1_Markers = VlnPlot_Cluster1_Markers, # From VlnPlot with cluster1.markers
+  VlnPlot_Cluster2_Markers = VlnPlot_Cluster2_Markers, # From VlnPlot with cluster2.markers
+  VlnPlot_Cluster5_Markers = VlnPlot_Cluster5_Markers, # From VlnPlot with cluster5.markers
+  FeaturePlot_Markers_Part1 = FeaturePlot_Markers_Part1, # From FeaturePlot (First part of pbmc.markers)
+  FeaturePlot_Markers_Part2 = FeaturePlot_Markers_Part2, # From FeaturePlot (Second part of pbmc.markers)
+  CombinedFeaturePlots_Part1 = CombinedFeaturePlots_Part1, # From CombinePlots (p)
+  CombinedFeaturePlots_Part2 = CombinedFeaturePlots_Part2, # From CombinePlots (p2)
+  UMAPPlot_NewClusterIDs = UMAPPlot_NewClusterIDs, # From DimPlot (UMAP) with new cluster ids
+  PCADimPlot_NewClusterIDs = PCADimPlot_NewClusterIDs, # From DimPlot (PCA) with new cluster ids
+  UMAPPlot_Final = UMAPPlot_Final  # From final DimPlot (UMAP)
+)
+
+# Call the function to save all plots
+save_plots(plot_list)
+
+```
